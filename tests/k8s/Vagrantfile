@@ -6,10 +6,10 @@ Vagrant.require_version ">= 1.8.3"
 $build = <<SCRIPT
 docker run -d -p 5000:5000 registry
 cd /home/vagrant/go/src/github.com/cilium/cilium/
-docker build -t cilium:build_test /home/vagrant/go/src/github.com/cilium/cilium
-export ID=$(docker images | grep "build_test" | awk '{print $3}')
-docker tag $ID localhost:5000/cilium:build_test
-docker push localhost:5000/cilium:build_test
+make docker-image
+export ID=$(docker images | grep "local_build" | awk '{print $3}')
+docker tag $ID localhost:5000/cilium:local_build
+docker push localhost:5000/cilium:local_build
 SCRIPT
 
 $k8s = <<SCRIPT

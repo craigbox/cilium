@@ -6,10 +6,10 @@ Vagrant.require_version ">= 1.8.3"
 
 $build = <<SCRIPT
 cd /home/vagrant/go/src/github.com/cilium/cilium/
-docker build -t cilium:build_test /home/vagrant/go/src/github.com/cilium/cilium
+make docker-image
 SCRIPT
 
-$save_docker_image="docker save -o /home/vagrant/go/src/github.com/cilium/cilium/cilium_test cilium:build_test"
+$save_docker_image="docker save -o /home/vagrant/go/src/github.com/cilium/cilium/cilium_test cilium:local_build"
 $load_docker_image="docker load -i /home/vagrant/go/src/github.com/cilium/cilium/cilium_test"
 
 $k8s = <<SCRIPT

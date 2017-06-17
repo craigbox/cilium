@@ -8,7 +8,7 @@ build: clean
 	cp -v ../../../Dockerfile $(BUILDDIR)
 	find $(BUILDDIR) -name ".*" -prune -exec rm -rf {} \;
 	$(MAKE) -C $(BUILDDIR) clean
-	docker build -t "cilium:cilium-ubuntu-16-04" $(BUILDDIR)
+	docker build -t "cilium:local_build" $(BUILDDIR)
 
 clean:
 	ls -d ./* | grep -vE "Makefile|clang-3.8.1.key" | xargs rm -rf
