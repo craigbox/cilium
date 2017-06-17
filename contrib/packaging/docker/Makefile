@@ -7,7 +7,7 @@ build: clean
 	@$(CURDIR)/../cp-dirs.sh $(BUILDDIR)
 	cp -v ../../../Dockerfile $(BUILDDIR)
 	find $(BUILDDIR) -name ".*" -prune -exec rm -rf {} \;
-	$(MAKE) -C $(BUILDDIR) clean
+	-$(MAKE) -C $(BUILDDIR) clean
 	docker build -t "cilium:local_build" $(BUILDDIR)
 
 clean:
