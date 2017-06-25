@@ -426,9 +426,18 @@ func initEnv() {
 
 	config.NAT46Prefix = r
 
-	err = nodeaddress.SetNodeAddress(v6Address, v4Prefix, config.Device)
-	if err != nil {
-		log.Fatalf("Unable to parse node address: %s", err)
+	// If device has been specified, use it to derive better default
+	// allocation prefixes
+	if config.Device != "undefined" {
+		nodeaddress.InitDefaultPrefix(config.Device)
+	}
+
+	if v6Address != "" {
+		if ip := net.ParseIP(v6Address); ip == nil {
+			log.Fatalf("Invalid IPv6 node address '%s'", v6Address)
+		} else {
+			nodeaddress.SetIPv6(ip)
+		}
 	}
 
 	if config.IsK8sEnabled() && !strings.HasPrefix(config.K8sEndpoint, "http") {
