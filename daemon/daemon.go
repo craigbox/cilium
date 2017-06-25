@@ -656,6 +656,9 @@ func NewDaemon(c *Config) (*Daemon, error) {
 	}
 
 	log.Infof("Local node-name: %s", nodeaddress.GetName())
+	log.Infof("Node-IPv6: %s", nodeaddress.GetIPv6())
+	log.Infof("Node-IPv4: %s", nodeaddress.GetIPv4())
+	log.Infof("Local node-name: %s", nodeaddress.GetName())
 	log.Infof("Cluster IPv6 prefix: %s", nodeaddress.GetIPv6ClusterRange())
 	log.Infof("Cluster IPv4 prefix: %s", nodeaddress.GetIPv4ClusterRange())
 	log.Infof("IPv6 allocation prefix: %s", nodeaddress.GetIPv6AllocRange())
