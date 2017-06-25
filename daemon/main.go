@@ -76,6 +76,7 @@ var (
 	nat46prefix        string
 	socketPath         string
 	v4Prefix           string
+	v6Prefix           string
 	v6Address          string
 )
 
@@ -255,7 +256,8 @@ func init() {
 	flags.StringVar(&config.LBInterface, "lb", "",
 		"Enables load balancer mode where load balancer bpf program is attached to the given interface")
 	flags.BoolVar(&config.IPv4Disabled, "disable-ipv4", false, "Disable IPv4 mode")
-	flags.StringVar(&v4Prefix, "ipv4-range", "", "IPv4 prefix")
+	flags.StringVar(&v4Prefix, "ipv4-range", "", "Per-node IPv4 endpoint allocation prefix")
+	flags.StringVar(&v6Prefix, "ipv6-range", "", "Per-node IPv6 endpoint allocation prefix")
 	flags.StringVarP(&config.Tunnel, "tunnel", "t", "vxlan", "Tunnel mode vxlan or geneve, vxlan is the default")
 	flags.StringVar(&bpfRoot, "bpf-root", "", "Path to mounted BPF filesystem")
 	flags.String("access-log", "", "Path to access log of all HTTP requests observed")

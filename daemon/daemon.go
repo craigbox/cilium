@@ -639,6 +639,14 @@ func NewDaemon(c *Config) (*Daemon, error) {
 		nodeaddress.SetIPv4AllocRange(net)
 	}
 
+	if v6Prefix != "" {
+		_, net, err := net.ParseCIDR(v6Prefix)
+		if err != nil {
+			log.Fatalf("Invalid IPv6 allocation prefix '%s': %s", v6Prefix, err)
+		}
+		nodeaddress.SetIPv6AllocRange(net)
+	}
+
 	// Populate list of nodes with local node entry
 	node.UpdateNode(nodeaddress.GetNode())
 
