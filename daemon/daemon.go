@@ -370,9 +370,6 @@ func (d *Daemon) compileBase() error {
 // useK8sNodeCIDR sets the ipv4-range value from the cluster-node-cidr defined in the,
 // kube-apiserver.
 func (d *Daemon) useK8sNodeCIDR(nodeName string) error {
-	if d.conf.IPv4Disabled {
-		return nil
-	}
 	k8sNode, err := d.k8sClient.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 	if err != nil {
 		return err
@@ -385,16 +382,35 @@ func (d *Daemon) useK8sNodeCIDR(nodeName string) error {
 	if err != nil {
 		return err
 	}
-	ciliumIPv4, err := addressing.NewCiliumIPv4(ip.String())
-	if err != nil {
-		return err
+
+	// Check if the pod CIDR is either IPv4 or IPv6
+	if ip.To4() != nil {
+		ciliumIPv4, err := addressing.NewCiliumIPv4(ip.String())
+		if err != nil {
+			return err
+		}
+		ipv6NodeAddress := nodeaddress.IPv6Address.NodeIP().String()
+		err = nodeaddress.SetNodeAddress(ipv6NodeAddress, ciliumIPv4.NodeIP().String(), "")
+		if err != nil {
+			return err
+		}
+	} else {
+		ciliumIPv6, err := addressing.NewCiliumIPv6(ip.String())
+		if err != nil {
+			return err
+		}
+		ipv4NodeAddress := nodeaddress.IPv4Address.NodeIP().String()
+		err = nodeaddress.SetNodeAddress(ciliumIPv6.NodeIP().String(), ipv4NodeAddress, "")
+		if err != nil {
+			return err
+		}
 	}
-	ipv6NodeAddress := nodeaddress.IPv6Address.NodeIP().String()
-	err = nodeaddress.SetNodeAddress(ipv6NodeAddress, ciliumIPv4.NodeIP().String(), "")
-	if err != nil {
-		return err
-	}
-	log.Infof("Retrieved %s for node %s. Using it for ipv4-range", k8sNode.Spec.PodCIDR, nodeName)
+
+	v4CIDR := nodeaddress.IPv4Address.IPNet(nodeaddress.DefaultIPv4PrefixLen)
+	v6CIDR := nodeaddress.IPv6Address.IPNet(nodeaddress.DefaultIPv6PrefixLen)
+	k8s.AnnotateNodeCIDR(d.k8sClient, k8sNode, v4CIDR, v6CIDR)
+
+	log.Infof("Retrieved %s for node %s", k8sNode.Spec.PodCIDR, nodeName)
 	return nil
 }
 
