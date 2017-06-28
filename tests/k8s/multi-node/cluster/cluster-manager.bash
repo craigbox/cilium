@@ -6,8 +6,7 @@ source "${dir}/../helpers.bash"
 dir=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 
 etcd_version="v3.1.0"
-k8s_version="v1.6.4"
-HYPERKUBE_IMAGE=gcr.io/google_containers/hyperkube:${k8s_version}
+k8s_version="1.6.4-00"
 
 certs_dir="${dir}/certs"
 k8s_dir="${dir}/k8s"
@@ -54,13 +53,38 @@ EOF
     allocate_node_cidr_opts=''
 
     source "${dir}/env.bash"
+
+    cat <<EOF > "${dir}/kubeadm-master.conf"
+apiVersion: kubeadm.k8s.io/v1alpha1
+kind: MasterConfiguration
+api:
+  advertiseAddress: ${controller_ip}
+etcd:
+  endpoints:
+  - https://${controller_ip_brackets}:2379
+  caFile: /etc/kubernetes/ca.pem
+  certFile: /etc/kubernetes/kubernetes.pem
+  keyFile: /etc/kubernetes/kubernetes-key.pem
+networking:
+  dnsDomain: ${cluster_name}.local
+  serviceSubnet: "${service_cluster_ip_range}"
+  podSubnet: "${cluster_cidr}"
+token: "1234.5678"
+EOF
+
+    cat <<EOF > "${dir}/kubeadm-slave.conf"
+apiVersion: kubeadm.k8s.io/v1alpha1
+kind: NodeConfiguration
+discoveryTokenAPIServers:
+  - ${controller_ip_brackets}:6443
+EOF
 }
 
 function generate_certs(){
     bash "${certs_dir}/generate-certs.sh"
 }
 
-function install_cni(){
+function install_cni_config(){
     sudo mkdir -p /opt/cni
     sudo mkdir -p /etc/cni/net.d
 
@@ -72,67 +96,12 @@ function install_cni(){
 }
 EOF
 
-    wget -nv https://storage.googleapis.com/kubernetes-release/network-plugins/cni-07a8a28637e97b22eb8dfe710eeae1344f69d16e.tar.gz
-    sudo tar -xvf cni-07a8a28637e97b22eb8dfe710eeae1344f69d16e.tar.gz -C /opt/cni
 }
 
 function install_etcd(){
     wget -nv https://github.com/coreos/etcd/releases/download/${etcd_version}/etcd-${etcd_version}-linux-amd64.tar.gz
     tar -xvf etcd-${etcd_version}-linux-amd64.tar.gz
     sudo mv etcd-${etcd_version}-linux-amd64/etcd* /usr/bin/
-}
-
-function install_kubectl(){
-    wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubectl
-    chmod +x kubectl
-    sudo mv kubectl /usr/local/bin
-}
-
-function install_kubelet(){
-    wget -nv https://storage.googleapis.com/kubernetes-release/release/${k8s_version}/bin/linux/amd64/kubelet
-    chmod +x kubelet
-    sudo mv kubelet /usr/bin/
-}
-
-function create_pod_specs(){
-    sed -e "s+\$HYPERKUBE_IMAGE+${HYPERKUBE_IMAGE}+g;\
-        s+\$controller_ip_brackets+${controller_ip_brackets}+g;\
-        s+\$controller_ip+${controller_ip}+g;\
-        s+\$local+${local}+g;\
-        s+\$service_cluster_ip+${service_cluster_ip_range}+g" \
-    "${k8s_dir}/kube-api-server.json.sed" > "${k8s_dir}/kube-api-server.json"
-
-    sed -e "s+\$HYPERKUBE_IMAGE+${HYPERKUBE_IMAGE}+g;\
-        s+\$allocate_node_cidr_opts+${allocate_node_cidr_opts}+g;\
-        s+\$cluster_cidr+${cluster_cidr}+g;\
-        s+\$cluster_name+${cluster_name}+g;\
-        s+\$local_with_brackets+${local_with_brackets}+g;\
-        s+\$local+${local}+g;\
-        s+\$node_cidr_mask_size+${node_cidr_mask_size}+g;\
-        s+\$service_cluster_ip_range+${service_cluster_ip_range}+g" \
-    "${k8s_dir}/kube-controller-manager.json.sed" > "${k8s_dir}/kube-controller-manager.json"
-
-    sed -e "s+\$HYPERKUBE_IMAGE+${HYPERKUBE_IMAGE}+g;\
-        s+\$local_with_brackets+${local_with_brackets}+g;\
-        s+\$local+${local}+g" \
-    "${k8s_dir}/kube-scheduler.json.sed" > "${k8s_dir}/kube-scheduler.json"
-}
-
-function install_k8s_master_config(){
-    sudo mkdir -p /srv/kubernetes/
-    sudo mkdir -p /etc/kubernetes/manifests/
-
-    sudo cp "${certs_dir}/token.csv" \
-            "${certs_dir}/ca.pem" \
-            "${certs_dir}/ca-key.pem" \
-            "${certs_dir}/kubernetes-key.pem" \
-            "${certs_dir}/kubernetes.pem" \
-            /srv/kubernetes/
-
-    sudo cp "${k8s_dir}/kube-api-server.json" \
-            "${k8s_dir}/kube-controller-manager.json" \
-            "${k8s_dir}/kube-scheduler.json" \
-            /etc/kubernetes/manifests/
 }
 
 function copy_etcd_certs(){
@@ -142,6 +111,14 @@ function copy_etcd_certs(){
             "${certs_dir}/kubernetes-key.pem" \
             "${certs_dir}/kubernetes.pem" \
             /etc/etcd/
+
+    # kubeadmn doesn't automatically mount the files to the containers
+    # yet so we need to copy the files to directory that we specify in
+    # the kubeadm configuration file
+    sudo cp "${certs_dir}/ca.pem" \
+            "${certs_dir}/kubernetes-key.pem" \
+            "${certs_dir}/kubernetes.pem" \
+            /etc/kubernetes
 }
 
 function generate_etcd_config(){
@@ -177,92 +154,6 @@ WantedBy=multi-user.target
 EOF
 }
 
-function generate_kubelet_config(){
-    BOOTSTRAP_TOKEN=$(cat ${certs_dir}/token.csv | cut -d"," -f1)
-
-    kubectl config set-cluster ${cluster_name} \
-        --certificate-authority=${certs_dir}/ca.pem \
-        --embed-certs=true \
-        --server=https://${controller_ip_brackets}:6443 \
-        --kubeconfig=bootstrap.kubeconfig
-
-    kubectl config set-credentials kubelet-bootstrap \
-        --token=${BOOTSTRAP_TOKEN} \
-        --kubeconfig=bootstrap.kubeconfig
-
-    kubectl config set-context default \
-        --cluster=${cluster_name} \
-        --user=kubelet-bootstrap \
-        --kubeconfig=bootstrap.kubeconfig
-
-    kubectl config use-context default --kubeconfig=bootstrap.kubeconfig
-
-    sudo mkdir -p /var/lib/kubelet/
-    sudo mkdir -p /etc/kubernetes/manifests
-
-    sudo cp "${certs_dir}/$(hostname).pem" \
-            "${certs_dir}/$(hostname)-key.pem" \
-        /var/lib/kubelet/
-
-    sudo cp bootstrap.kubeconfig /var/lib/kubelet/kubeconfig
-
-    sudo tee /etc/systemd/system/kubelet.service <<EOF
-[Unit]
-Description=Kubernetes Kubelet
-Documentation=https://github.com/GoogleCloudPlatform/kubernetes
-After=docker.service
-Requires=docker.service
-
-[Service]
-ExecStartPre=/bin/bash -c ' \\
-        if [[ \$(/bin/mount | /bin/grep /sys/fs/bpf -c) -eq 0 ]]; then \\
-           /bin/mount bpffs /sys/fs/bpf -t bpf; \\
-        fi'
-ExecStart=/usr/bin/kubelet \\
-  --allow-privileged=true \\
-  --cloud-provider= \\
-  --cluster-dns=${cluster_dns_ip} \\
-  --cluster-domain=${cluster_name}.local \\
-  --container-runtime=docker \\
-  --experimental-bootstrap-kubeconfig=/var/lib/kubelet/kubeconfig \\
-  --make-iptables-util-chains=false \\
-  --network-plugin=cni \\
-  --kubeconfig=/var/lib/kubelet/kubeconfig \\
-  --pod-manifest-path=/etc/kubernetes/manifests/ \\
-  --serialize-image-pulls=false \\
-  --require-kubeconfig=true \\
-  --register-node=true \\
-  --cert-dir=/var/lib/kubelet \\
-  --tls-cert-file=/var/lib/kubelet/$(hostname).pem \\
-  --tls-private-key-file=/var/lib/kubelet/$(hostname)-key.pem \\
-  --v=2
-
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-}
-
-function generate_kubectl_config(){
-    kubectl config set-cluster ${cluster_name} \
-        --certificate-authority=${certs_dir}/ca.pem \
-        --embed-certs=true \
-        --server=https://${controller_ip_brackets}:6443
-
-    kubectl config set-credentials admin \
-        --embed-certs=true \
-        --client-certificate=${certs_dir}/admin.pem \
-        --client-key=${certs_dir}/admin-key.pem
-
-    kubectl config set-context ${cluster_name} \
-        --cluster=${cluster_name} \
-        --user=admin
-
-    kubectl config use-context ${cluster_name}
-}
-
 function install_cilium_config(){
     sudo mkdir -p /var/lib/cilium
 
@@ -276,27 +167,6 @@ endpoints:
 ca-file: '/var/lib/cilium/etcd-ca.pem'
 EOF
 
-    kubectl config set-cluster ${cluster_name} \
-        --certificate-authority=${certs_dir}/ca.pem \
-        --embed-certs=true \
-        --server=https://${controller_ip_brackets}:6443 \
-        --kubeconfig=cilium.kubeconfig
-
-    kubectl config set-credentials admin \
-        --client-certificate=${certs_dir}/admin.pem \
-        --client-key=${certs_dir}/admin-key.pem \
-        --embed-certs=true \
-        --kubeconfig=cilium.kubeconfig
-
-    kubectl config set-context ${cluster_name} \
-        --cluster=${cluster_name} \
-        --user=admin \
-        --kubeconfig=cilium.kubeconfig
-
-    kubectl config use-context ${cluster_name} \
-        --kubeconfig=cilium.kubeconfig
-
-    sudo cp cilium.kubeconfig /var/lib/cilium/kubeconfig
 }
 
 function start_etcd(){
@@ -306,26 +176,11 @@ function start_etcd(){
     sudo systemctl status etcd --no-pager
 }
 
-function start_kubelet(){
-    sudo systemctl daemon-reload
-    sudo systemctl enable kubelet
-    sudo systemctl restart kubelet
-    sudo systemctl status kubelet --no-pager
-}
-
-function add_kubelet_rbac(){
-    kubectl create clusterrolebinding kubelet-bootstrap \
-        --clusterrole=system:node \
-        --user=kubelet-bootstrap
-}
-
 function clean_all(){
-    sudo service kubelet stop
+    sudo kubeadm reset
     sudo service etcd stop
     sudo docker rm -f `sudo docker ps -aq`
     sudo rm -fr /var/lib/etcd
-    sudo rm -fr /etc/kubernetes/manifests
-    sudo rm -fr /var/lib/kubelet
 }
 
 function fresh_install(){
@@ -343,30 +198,16 @@ function fresh_install(){
 
     get_options "${ipv6}"
 
-    install_cni
-    install_kubectl
-    install_kubelet
+    install_cni_config
 
     if [[ "$(hostname)" -eq "cilium-k8s-master" ]]; then
         install_etcd
-        create_pod_specs
-        install_k8s_master_config
         copy_etcd_certs
         generate_etcd_config
         start_etcd
     fi
 
     install_cilium_config
-    generate_kubelet_config
-    start_kubelet
-    generate_kubectl_config
-
-    #We only add kubelet RBAC permission on node-2 since
-    #it gave more than enough time for cilium-k8s-master
-    #to set up kube-apiserver
-    if [[ "$(hostname)" -eq "cilium-k8s-node-2" ]]; then
-        add_kubelet_rbac
-    fi
 }
 
 function reinstall(){
@@ -392,28 +233,12 @@ function reinstall(){
     fi
 
     if [[ "$(hostname)" -eq "cilium-k8s-master" ]]; then
-        create_pod_specs
-        install_k8s_master_config
         copy_etcd_certs
         generate_etcd_config
         start_etcd
     fi
 
     install_cilium_config
-    generate_kubelet_config
-    start_kubelet
-    generate_kubectl_config
-
-    if [[ "$(hostname)" -eq "cilium-k8s-master" ]]; then
-        wait_for_api_server_ready
-    fi
-
-    # We only add kubelet RBAC permission on node-2 since
-    # it gave more than enough time for cilium-k8s-master
-    # to set up kube-apiserver
-    if [[ "$(hostname)" -eq "cilium-k8s-node-2" ]]; then
-        add_kubelet_rbac
-    fi
 }
 
 function deploy_cilium(){
@@ -440,7 +265,7 @@ function deploy_cilium(){
     if [[ -n "${lb}" ]]; then
         node_selector='"kubernetes.io/hostname": "cilium-k8s-master"'
         # In loadbalancer mode we set the snoop and LB interface to
-        # enp0s8, the interface with IP 192.168.33.11.
+        # enp0s8, the interface with IP 192.168.36.11.
         iface='enp0s8'
 
         sed -e "s+\$disable_ipv4+${disable_ipv4}+g;\
@@ -473,7 +298,7 @@ function deploy_cilium(){
         # and set the routes automatically, remove this hack
         node_selector='"kubernetes.io/hostname": "cilium-k8s-master"'
         node_address='- "--node-address=F00D::C0A8:240B:0:0"'
-        ipv4_range='- "--ipv4-range=10.11.0.1"'
+        ipv4_range='- "--ipv4-range=10.11.0.1/16"'
 
         sed -e "s+\$disable_ipv4+${disable_ipv4}+g;\
                 s+\$node_selector+${node_selector}+g;\
@@ -485,7 +310,7 @@ function deploy_cilium(){
 
         node_selector='"kubernetes.io/hostname": "cilium-k8s-node-2"'
         node_address='- "--node-address=F00D::C0A8:240C:0:0"'
-        ipv4_range='- "--ipv4-range=10.12.0.1"'
+        ipv4_range='- "--ipv4-range=10.12.0.1/16"'
 
         sed -e "s+\$disable_ipv4+${disable_ipv4}+g;\
                 s+\$node_selector+${node_selector}+g;\

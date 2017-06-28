@@ -14,7 +14,7 @@ spec:
         $node_selector
       serviceAccountName: cilium
       containers:
-      - image: cilium:build_test
+      - image: cilium:local_build
         imagePullPolicy: Never
         name: cilium-agent
         command: [ "cilium-agent" ]
